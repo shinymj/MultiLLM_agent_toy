@@ -237,7 +237,12 @@ async def run_system() -> Dict[str, Any]:
         # 사용자에게 질문 표시
         print("\n" + "="*50)
         print("입력 텍스트 요약:")
-        print(input_summary)
+        # 만약 input_summary가 이미 "입력 텍스트 요약:"으로 시작한다면 제거
+        if input_summary.startswith("입력 텍스트 요약:"):
+            cleaned_summary = input_summary.replace("입력 텍스트 요약:", "", 1).strip()
+            print(cleaned_summary)
+        else:
+            print(input_summary)
         print("\n이 내용을 가지고 무엇을 하고 싶으신가요?")
         print("="*50 + "\n")
         
