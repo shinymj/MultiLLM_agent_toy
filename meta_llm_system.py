@@ -1,239 +1,322 @@
 """
-다양한 LLM API 클라이언트를 구현하는 모듈입니다.
-Langchain을 사용하여 OpenAI와 Anthropic API를 일관된 인터페이스로 호출합니다.
+Multi LLM Agent 시스템의 메인 코드입니다.
+전체 시스템의 흐름을 조정하고 각 LLM의 호출을 관리합니다.
 """
 import os
+import json
+import time
+import PyPDF2
 import asyncio
-from typing import Dict, List, Tuple, Any
-from dotenv import load_dotenv
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Any, Optional
 
-# Langchain 임포트 - LLM 및 프롬프트 템플릿
-from langchain_anthropic import ChatAnthropic
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
+# LLM 클라이언트 모듈 임포트
+from llm_clients import (
+    call_meta_llm, 
+    call_evaluation_llm, 
+    call_inquisitive_llms_parallel,
+    initialize_llm_models,
+    llm_models
+)
 
-# .env 파일에서 환경 변수 로드
-load_dotenv()
+# Langchain 관련 모듈 임포트
+from langchain_core.output_parsers import PydanticOutputParser, JsonOutputParser
+from langchain_core.prompts import PromptTemplate
+from pydantic import BaseModel, Field
 
-# API 키 가져오기
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# 모델 이름 설정
-META_LLM_MODEL = os.getenv("META_LLM_MODEL", "claude-3-7-sonnet-20250219")
-INQUISITIVE_LLM_CLAUDE_MODEL = os.getenv("INQUISITIVE_LLM_CLAUDE_MODEL", "claude-3-haiku-20240307")
-INQUISITIVE_LLM_OPENAI_MODEL = os.getenv("INQUISITIVE_LLM_OPENAI_MODEL", "gpt-4o-mini")
-EVALUATION_LLM_MODEL = os.getenv("EVALUATION_LLM_MODEL", "claude-3-5-sonnet-20240620")
-
-def initialize_llm_models():
+def create_output_directory() -> Path:
     """
-    Langchain LLM 모델을 초기화하는 함수
+    결과 저장을 위한 _output 디렉토리를 생성하는 함수
     
     Returns:
-        dict: 초기화된 LLM 모델들의 딕셔너리
+        Path: 생성된 디렉토리 경로
     """
-    models = {}
-    
-    # 모델 초기화 전 API 키 확인
-    if not ANTHROPIC_API_KEY:
-        raise ValueError("ANTHROPIC_API_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.")
-    
-    if not OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.")
-    
-    # Meta LLM 모델 초기화 (Claude 3.7 Sonnet)
-    models["meta"] = ChatAnthropic(
-        model=META_LLM_MODEL,
-        anthropic_api_key=ANTHROPIC_API_KEY,
-        max_tokens=2000
-    )
-    
-    # Inquisitive LLM 모델 초기화 (Claude 3 Haiku)
-    models["inquisitive_claude"] = ChatAnthropic(
-        model=INQUISITIVE_LLM_CLAUDE_MODEL,
-        anthropic_api_key=ANTHROPIC_API_KEY,
-        max_tokens=1000
-    )
-    
-    # Inquisitive LLM 모델 초기화 (GPT-4o mini)
-    models["inquisitive_openai"] = ChatOpenAI(
-        model=INQUISITIVE_LLM_OPENAI_MODEL,
-        openai_api_key=OPENAI_API_KEY,
-        max_tokens=1000
-    )
-    
-    # Evaluation LLM 모델 초기화 (Claude 3.5 Sonnet)
-    models["evaluation"] = ChatAnthropic(
-        model=EVALUATION_LLM_MODEL,
-        anthropic_api_key=ANTHROPIC_API_KEY,
-        max_tokens=2000
-    )
-    
-    return models
+    output_dir = Path("_output")
+    output_dir.mkdir(exist_ok=True)
+    return output_dir
 
-# 모델 초기화
-llm_models = initialize_llm_models()
 
-def create_prompt_chain(model_key: str, system_prompt: str, output_parser=None):
+def load_system_prompts() -> Dict[str, str]:
     """
-    Langchain 프롬프트 체인을 생성하는 함수
+    각 LLM의 시스템 프롬프트를 로드하는 함수
+    
+    Returns:
+        dict: 각 LLM 유형별 시스템 프롬프트
+    """
+    prompts = {}
+    
+    # Meta LLM 프롬프트 로드
+    with open("Prompts/meta_llm.txt", "r", encoding="utf-8") as f:
+        prompts["meta"] = f.read()
+    
+    # Inquisitive LLM 프롬프트 로드
+    with open("Prompts/inquisitive_llm.txt", "r", encoding="utf-8") as f:
+        prompts["inquisitive"] = f.read()
+    
+    # Evaluation LLM 프롬프트 로드
+    with open("Prompts/evaluation_llm.txt", "r", encoding="utf-8") as f:
+        prompts["evaluation"] = f.read()
+    
+    return prompts
+
+
+def extract_text_from_pdf(pdf_path: str) -> str:
+    """
+    PDF 파일에서 텍스트를 추출하는 함수
     
     Args:
-        model_key (str): 사용할 모델의 키
-        system_prompt (str): 시스템 프롬프트
-        output_parser: 출력 파서 (기본값: StrOutputParser)
+        pdf_path (str): PDF 파일 경로
         
     Returns:
-        chain: 프롬프트 체인
+        str: 추출된 텍스트
     """
-    if output_parser is None:
-        output_parser = StrOutputParser()
-    
-    # 프롬프트 템플릿 생성
-    prompt = ChatPromptTemplate.from_messages([
-        SystemMessagePromptTemplate.from_template(system_prompt),
-        HumanMessagePromptTemplate.from_template("{user_input}")
-    ])
-    
-    # 체인 생성
-    chain = (
-        {"user_input": RunnablePassthrough()} 
-        | prompt 
-        | llm_models[model_key] 
-        | output_parser
-    )
-    
-    return chain
-
-def call_meta_llm(system_prompt: str, user_prompt: str) -> str:
-    """
-    Meta LLM(Claude 3.7 Sonnet)을 호출하는 함수
-    
-    Args:
-        system_prompt (str): 시스템 프롬프트
-        user_prompt (str): 사용자 프롬프트
-        
-    Returns:
-        str: LLM의 응답
-    """
+    text = ""
     try:
-        # 프롬프트 체인 생성
-        chain = create_prompt_chain("meta", system_prompt)
-        
-        # 체인 실행
-        response = chain.invoke(user_prompt)
-        return response
+        with open(pdf_path, "rb") as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            for page_num in range(len(pdf_reader.pages)):
+                page = pdf_reader.pages[page_num]
+                text += page.extract_text()
     except Exception as e:
-        print(f"Meta LLM 호출 중 오류 발생: {e}")
-        return None
+        print(f"PDF 파일 처리 중 오류 발생: {e}")
+    
+    return text
 
-def call_inquisitive_llm_claude(system_prompt: str, user_prompt: str) -> str:
+
+def replace_template_variables(template: str, variables: Dict[str, str]) -> str:
     """
-    Inquisitive LLM(Claude 3 Haiku)을 호출하는 함수
+    템플릿 문자열의 변수를 실제 값으로 대체하는 함수
     
     Args:
-        system_prompt (str): 시스템 프롬프트
-        user_prompt (str): 사용자 프롬프트
+        template (str): 템플릿 문자열
+        variables (dict): 변수 이름과 값의 딕셔너리
         
     Returns:
-        str: LLM의 응답
+        str: 변수가 대체된 문자열
     """
-    try:
-        # 프롬프트 체인 생성
-        chain = create_prompt_chain("inquisitive_claude", system_prompt)
-        
-        # 체인 실행
-        response = chain.invoke(user_prompt)
-        return response
-    except Exception as e:
-        print(f"Inquisitive Claude LLM 호출 중 오류 발생: {e}")
-        return None
+    result = template
+    
+    # {변수명} 형식의 변수 대체
+    for key, value in variables.items():
+        result = result.replace(f"{{{key}}}", value)
+    
+    # ${변수명} 형식의 변수 대체
+    for key, value in variables.items():
+        result = result.replace(f"${{{key}}}", value)
+    
+    return result
 
-def call_inquisitive_llm_openai(system_prompt: str, user_prompt: str) -> str:
-    """
-    Inquisitive LLM(GPT-4o mini)을 호출하는 함수
-    
-    Args:
-        system_prompt (str): 시스템 프롬프트
-        user_prompt (str): 사용자 프롬프트
-        
-    Returns:
-        str: LLM의 응답
-    """
-    try:
-        # 프롬프트 체인 생성
-        chain = create_prompt_chain("inquisitive_openai", system_prompt)
-        
-        # 체인 실행
-        response = chain.invoke(user_prompt)
-        return response
-    except Exception as e:
-        print(f"Inquisitive OpenAI LLM 호출 중 오류 발생: {e}")
-        return None
 
-def call_evaluation_llm(system_prompt: str, user_prompt: str) -> str:
-    """
-    Evaluation LLM(Claude 3.5 Sonnet)을 호출하는 함수
-    
-    Args:
-        system_prompt (str): 시스템 프롬프트
-        user_prompt (str): 사용자 프롬프트
-        
-    Returns:
-        str: LLM의 응답
-    """
-    try:
-        # 프롬프트 체인 생성
-        chain = create_prompt_chain("evaluation", system_prompt)
-        
-        # 체인 실행
-        response = chain.invoke(user_prompt)
-        return response
-    except Exception as e:
-        print(f"Evaluation LLM 호출 중 오류 발생: {e}")
-        return None
+class MetaLLMOutput(BaseModel):
+    """Meta LLM의 출력을 구조화하는 Pydantic 모델"""
+    input_summary: str = Field(description="입력 텍스트의 간략한 요약")
+    user_request: str = Field(description="사용자의 요청")
+    goal: str = Field(description="2-3단어로 된 목표")
 
-async def call_inquisitive_llms_parallel(system_prompt: str, user_prompt: str) -> Tuple[str, str]:
+
+class EvaluationCriteria(BaseModel):
+    """평가 기준 항목을 구조화하는 Pydantic 모델"""
+    criteria: str = Field(description="평가 기준 이름")
+    score: str = Field(description="평가 점수 (1-5)")
+    rationale: str = Field(description="평가 점수에 대한 근거")
+
+
+class EvaluationResult(BaseModel):
+    """평가 결과를 구조화하는 Pydantic 모델"""
+    evaluation: List[EvaluationCriteria] = Field(description="평가 기준별 점수와 근거")
+
+
+async def run_system() -> Dict[str, Any]:
     """
-    두 개의 Inquisitive LLM을 병렬로 호출하는 비동기 함수
+    전체 시스템 실행을 관리하는 비동기 함수
     
-    Args:
-        system_prompt (str): 시스템 프롬프트
-        user_prompt (str): 사용자 프롬프트
-        
     Returns:
-        tuple: (OpenAI 응답, Claude 응답)
+        dict: 최종 결과
     """
-    # 비동기 작업 생성
-    async def call_openai_async():
-        # 프롬프트 체인 생성
-        chain = create_prompt_chain("inquisitive_openai", system_prompt)
-        # 비동기로 체인 실행
-        return await chain.ainvoke(user_prompt)
+    # 시스템 프롬프트 로드
+    prompts = load_system_prompts()
     
-    async def call_claude_async():
-        # 프롬프트 체인 생성
-        chain = create_prompt_chain("inquisitive_claude", system_prompt)
-        # 비동기로 체인 실행
-        return await chain.ainvoke(user_prompt)
+    # PDF에서 텍스트 추출
+    input_text = extract_text_from_pdf("input.pdf")
+    if not input_text:
+        print("PDF에서 텍스트를 추출할 수 없습니다.")
+        return None
     
-    # 병렬로 두 작업 실행
-    openai_response, claude_response = await asyncio.gather(
-        call_openai_async(),
-        call_claude_async()
+    print(f"PDF에서 추출된 텍스트 길이: {len(input_text)} 자")
+    
+    # 1. Meta LLM이 입력 분석 (Langchain 사용)
+    print("1. Meta LLM이 입력을 분석하는 중...")
+    
+    # 출력 파서 생성
+    meta_parser = PydanticOutputParser(pydantic_object=MetaLLMOutput)
+    
+    # 프롬프트 템플릿 생성 (출력 형식 지시 포함)
+    meta_prompt_template = PromptTemplate(
+        template="""
+        {system_prompt}
+        
+        다음 텍스트를 분석하고, 요약하세요:
+        
+        {input_text}
+        
+        {format_instructions}
+        """,
+        input_variables=["system_prompt", "input_text"],
+        partial_variables={"format_instructions": meta_parser.get_format_instructions()}
     )
     
-    return openai_response, claude_response
+    # 체인 생성 및 실행
+    meta_chain = (
+        meta_prompt_template 
+        | llm_models["meta"] 
+        | meta_parser
+    )
+    
+    try:
+        meta_result = await meta_chain.ainvoke({
+            "system_prompt": prompts["meta"],
+            "input_text": input_text
+        })
+        
+        # 구조화된 결과에서 값 추출
+        input_summary = meta_result.input_summary
+        user_request = meta_result.user_request
+        goal = meta_result.goal
+        
+        print(f"입력 요약: {input_summary}")
+        print(f"사용자 요청: {user_request}")
+        print(f"목표: {goal}")
+    except Exception as e:
+        print(f"Meta LLM 분석 중 오류 발생: {e}")
+        # 기본값 설정
+        input_summary = "입력 텍스트 요약 실패"
+        user_request = "사용자 요청 추출 실패"
+        goal = "목표 추출 실패"
+    
+    # 2. Inquisitive LLM들이 질문 생성 (Langchain 사용)
+    print("2. Inquisitive LLM들이 질문을 생성하는 중...")
+    
+    # 프롬프트 준비
+    inquisitive_prompt = f"""
+    입력 요약: {input_summary}
+    사용자 요청: {user_request}
+    목표: {goal}
+    
+    위 정보를 바탕으로 사용자의 요구를 달성하기 위해 구체화할 부분을 파악하고, 효과적인 후속 질문을 생성하세요.
+    """
+    
+    try:
+        # 병렬로 두 LLM 호출 - Langchain의 비동기 기능 활용
+        followup_question_openai, followup_question_claude = await call_inquisitive_llms_parallel(
+            system_prompt=prompts["inquisitive"],
+            user_prompt=inquisitive_prompt
+        )
+        
+        print(f"OpenAI 후속 질문: {followup_question_openai}")
+        print(f"Claude 후속 질문: {followup_question_claude}")
+    except Exception as e:
+        print(f"Inquisitive LLM 질문 생성 중 오류 발생: {e}")
+        # 기본값 설정
+        followup_question_openai = "OpenAI 질문 생성 실패"
+        followup_question_claude = "Claude 질문 생성 실패"
+    
+    # 3. Evaluation LLM이 질문 평가 (Langchain 사용)
+    print("3. Evaluation LLM이 질문을 평가하는 중...")
+    
+    # 평가 변수 준비
+    eval_variables = {
+        "input_summary": input_summary,
+        "user_request": user_request,
+        "goal": goal
+    }
+    
+    # JSON 파서 생성 (평가 결과를 구조화된 형식으로 받기 위함)
+    eval_parser = JsonOutputParser(pydantic_object=EvaluationResult)
+    
+    # 평가 프롬프트 템플릿
+    eval_prompt_template = PromptTemplate(
+        template="{evaluation_prompt}\n\nFollow-up Question to evaluate: {followup_question}",
+        input_variables=["evaluation_prompt", "followup_question"]
+    )
+    
+    # 평가 프롬프트 준비 (변수 대체)
+    evaluation_prompt = replace_template_variables(prompts["evaluation"], eval_variables)
+    
+    # OpenAI 질문 평가
+    try:
+        eval_chain_openai = (
+            eval_prompt_template 
+            | llm_models["evaluation"] 
+            | eval_parser
+        )
+        
+        eval_result_openai = await eval_chain_openai.ainvoke({
+            "evaluation_prompt": evaluation_prompt,
+            "followup_question": followup_question_openai
+        })
+        evaluation_openai = eval_result_openai.evaluation
+    except Exception as e:
+        print(f"OpenAI 질문 평가 중 오류 발생: {e}")
+        evaluation_openai = []
+    
+    # Claude 질문 평가
+    try:
+        eval_chain_claude = (
+            eval_prompt_template 
+            | llm_models["evaluation"] 
+            | eval_parser
+        )
+        
+        eval_result_claude = await eval_chain_claude.ainvoke({
+            "evaluation_prompt": evaluation_prompt,
+            "followup_question": followup_question_claude
+        })
+        evaluation_claude = eval_result_claude.evaluation
+    except Exception as e:
+        print(f"Claude 질문 평가 중 오류 발생: {e}")
+        evaluation_claude = []
+    
+    # 4. 최종 결과 구성
+    final_result = {
+        "context": {
+            "input_summary": input_summary,
+            "user_request": user_request,
+            "goal": goal
+        },
+        "results": {
+            "followup_question_openai": {
+                "question": followup_question_openai,
+                "evaluation": [eval_item.dict() for eval_item in evaluation_openai] if evaluation_openai else []
+            },
+            "followup_question_claude": {
+                "question": followup_question_claude,
+                "evaluation": [eval_item.dict() for eval_item in evaluation_claude] if evaluation_claude else []
+            }
+        }
+    }
+    
+    # 5. 결과 저장
+    output_dir = create_output_directory()
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    output_file = output_dir / f"{timestamp}_output.json"
+    
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(final_result, f, ensure_ascii=False, indent=2)
+    
+    print(f"결과가 {output_file}에 저장되었습니다.")
+    
+    return final_result
 
-# 모듈 테스트
+
 if __name__ == "__main__":
-    # 간단한 테스트 코드
-    print("LLM 클라이언트 모듈 테스트")
-    
-    test_system_prompt = "당신은 도움이 되는 AI 어시스턴트입니다."
-    test_user_prompt = "안녕하세요, 오늘 날씨는 어떤가요?"
-    
-    response = call_meta_llm(test_system_prompt, test_user_prompt)
-    print(f"Meta LLM 응답: {response[:100]}...")  # 응답의 처음 100자만 출력
+    # 비동기 함수 실행
+    try:
+        result = asyncio.run(run_system())
+        if result:
+            print("시스템 실행 완료!")
+        else:
+            print("시스템 실행 중 오류가 발생했습니다.")
+    except Exception as e:
+        print(f"프로그램 실행 중 예상치 못한 오류 발생: {e}")
