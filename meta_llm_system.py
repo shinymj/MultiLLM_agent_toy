@@ -21,7 +21,7 @@ from llm_clients import (
 )
 
 # Langchain 관련 모듈 임포트
-from langchain_core.output_parsers import PydanticOutputParser, JsonOutputParser
+from langchain_core.output_parsers import PydanticOutputParser, JsonOutputParser, StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
 
@@ -146,53 +146,116 @@ async def run_system() -> Dict[str, Any]:
     
     print(f"PDF에서 추출된 텍스트 길이: {len(input_text)} 자")
     
-    # 1. Meta LLM이 입력 분석 (Langchain 사용)
-    print("1. Meta LLM이 입력을 분석하는 중...")
+    # 1.1 Meta LLM이 입력 분석하고 요약 생성 (Langchain 사용)
+    print("1.1 Meta LLM이 입력을 분석하고 요약을 생성하는 중...")
     
-    # 출력 파서 생성
-    meta_parser = PydanticOutputParser(pydantic_object=MetaLLMOutput)
-    
-    # 프롬프트 템플릿 생성 (출력 형식 지시 포함)
-    meta_prompt_template = PromptTemplate(
+    # 요약 생성을 위한 프롬프트 템플릿
+    summary_prompt_template = PromptTemplate(
         template="""
         {system_prompt}
         
-        다음 텍스트를 분석하고, 요약하세요:
+        다음 텍스트를 분석하고, 간결하게 요약하세요:
         
         {input_text}
-        
-        {format_instructions}
         """,
-        input_variables=["system_prompt", "input_text"],
-        partial_variables={"format_instructions": meta_parser.get_format_instructions()}
+        input_variables=["system_prompt", "input_text"]
     )
     
-    # 체인 생성 및 실행
-    meta_chain = (
-        meta_prompt_template 
+    # 요약 생성 체인
+    summary_chain = (
+        summary_prompt_template 
         | llm_models["meta"] 
-        | meta_parser
+        | StrOutputParser()
     )
     
     try:
-        meta_result = await meta_chain.ainvoke({
+        # 요약 생성 실행
+        summary_response = await summary_chain.ainvoke({
             "system_prompt": prompts["meta"],
             "input_text": input_text
         })
         
-        # 구조화된 결과에서 값 추출
-        input_summary = meta_result.input_summary
-        user_request = meta_result.user_request
-        goal = meta_result.goal
+        # 요약 추출 (JSON 형식이 아닌 경우를 처리)
+        if "{" in summary_response and "input_summary" in summary_response:
+            # JSON 응답에서 요약 추출 시도
+            try:
+                import re
+                import json
+                # JSON 부분 추출
+                json_match = re.search(r'({.*})', summary_response, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(1)
+                    json_data = json.loads(json_str)
+                    input_summary = json_data.get("input_summary", "")
+                else:
+                    input_summary = summary_response
+            except:
+                input_summary = summary_response
+        else:
+            # 일반 텍스트 응답
+            input_summary = summary_response
         
         print(f"입력 요약: {input_summary}")
-        print(f"사용자 요청: {user_request}")
-        print(f"목표: {goal}")
+        
+        # 1.2 사용자에게 텍스트로 무엇을 하고 싶은지 질문
+        print("\n1.2 사용자에게 무엇을 하고 싶은지 질문 중...")
+        
+        # 사용자에게 질문 표시
+        print("\n" + "="*50)
+        print("입력 텍스트 요약:")
+        print(input_summary)
+        print("\n이 내용을 가지고 무엇을 하고 싶으신가요?")
+        print("="*50 + "\n")
+        
+        # 사용자 응답 받기
+        user_request = input("사용자 요청: ")
+        
+        # 1.3 사용자 응답을 바탕으로 목표 추출
+        print("\n1.3 사용자 응답을 바탕으로 목표를 추출하는 중...")
+        
+        # 목표 추출을 위한 프롬프트 템플릿
+        goal_prompt_template = PromptTemplate(
+            template="""
+            다음은 텍스트 요약과 그에 대한 사용자의 요청입니다:
+            
+            텍스트 요약: {input_summary}
+            
+            사용자 요청: {user_request}
+            
+            위 사용자의 요청에서 핵심 목표를 2-3단어로 간결하게 추출하세요. 
+            추상적이지 않고 구체적인 단어를 사용하세요.
+            
+            예시 형식:
+            "데이터 분석", "의사결정 지원", "문서 요약", "정보 검색" 등
+            
+            목표:
+            """,
+            input_variables=["input_summary", "user_request"]
+        )
+        
+        # 목표 추출 체인
+        goal_chain = (
+            goal_prompt_template 
+            | llm_models["meta"] 
+            | StrOutputParser()
+        )
+        
+        # 목표 추출 실행
+        goal_response = await goal_chain.ainvoke({
+            "input_summary": input_summary,
+            "user_request": user_request
+        })
+        
+        # 목표 정리 (불필요한 따옴표나 공백 제거)
+        goal = goal_response.strip().strip('"\'')
+        
+        print(f"추출된 목표: {goal}")
+        
     except Exception as e:
-        print(f"Meta LLM 분석 중 오류 발생: {e}")
+        print(f"Meta LLM 처리 중 오류 발생: {e}")
         # 기본값 설정
         input_summary = "입력 텍스트 요약 실패"
-        user_request = "사용자 요청 추출 실패"
+        user_request = "사용자 요청을 받지 못했습니다"
         goal = "목표 추출 실패"
     
     # 2. Inquisitive LLM들이 질문 생성 (Langchain 사용)
