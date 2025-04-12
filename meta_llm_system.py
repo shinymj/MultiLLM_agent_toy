@@ -3,7 +3,7 @@ Multi LLM Agent 시스템의 메인 코드입니다.
 전체 시스템의 흐름을 조정하고 각 LLM의 호출을 관리합니다.
 """
 import os
-import json
+import json  # 전역 범위에 json 모듈 임포트
 import time
 import PyPDF2
 import asyncio
@@ -109,6 +109,41 @@ def replace_template_variables(template: str, variables: Dict[str, str]) -> str:
     return result
 
 
+def parse_evaluation_response(response_text: str) -> List[Dict[str, str]]:
+    """
+    평가 LLM의 응답에서 JSON 부분을 추출하고 파싱하는 함수
+    
+    Args:
+        response_text (str): LLM 응답 텍스트
+        
+    Returns:
+        list: 평가 항목 목록
+    """
+    try:
+        # JSON 시작과 끝을 찾기
+        start_idx = response_text.find('{')
+        end_idx = response_text.rfind('}') + 1
+        
+        if start_idx == -1 or end_idx == 0:
+            print(f"JSON을 찾을 수 없습니다: {response_text[:100]}...")
+            return []
+            
+        json_str = response_text[start_idx:end_idx]
+        data = json.loads(json_str)
+        
+        # evaluation 키가 있는지 확인
+        if "evaluation" in data:
+            return data["evaluation"]
+        else:
+            print(f"'evaluation' 키를 찾을 수 없습니다: {json_str[:100]}...")
+            return []
+            
+    except Exception as e:
+        print(f"평가 응답 파싱 중 오류 발생: {e}")
+        print(f"응답 텍스트: {response_text[:200]}...")
+        return []
+
+
 class MetaLLMOutput(BaseModel):
     """Meta LLM의 출력을 구조화하는 Pydantic 모델"""
     input_summary: str = Field(description="입력 텍스트의 간략한 요약")
@@ -180,7 +215,6 @@ async def run_system() -> Dict[str, Any]:
             # JSON 응답에서 요약 추출 시도
             try:
                 import re
-                import json
                 # JSON 부분 추출
                 json_match = re.search(r'({.*})', summary_response, re.DOTALL)
                 if json_match:
@@ -248,6 +282,9 @@ async def run_system() -> Dict[str, Any]:
         
         # 목표 정리 (불필요한 따옴표나 공백 제거)
         goal = goal_response.strip().strip('"\'')
+        # "목표:" 같은 접두어 제거
+        if "목표:" in goal:
+            goal = goal.replace("목표:", "").strip()
         
         print(f"추출된 목표: {goal}")
         
@@ -277,6 +314,10 @@ async def run_system() -> Dict[str, Any]:
             user_prompt=inquisitive_prompt
         )
         
+        # Claude 질문에서 불필요한 문장 제거
+        if "여기 제가 생성한 후속 질문입니다:" in followup_question_claude:
+            followup_question_claude = followup_question_claude.replace("여기 제가 생성한 후속 질문입니다:", "").strip()
+        
         print(f"OpenAI 후속 질문: {followup_question_openai}")
         print(f"Claude 후속 질문: {followup_question_claude}")
     except Exception as e:
@@ -285,7 +326,7 @@ async def run_system() -> Dict[str, Any]:
         followup_question_openai = "OpenAI 질문 생성 실패"
         followup_question_claude = "Claude 질문 생성 실패"
     
-    # 3. Evaluation LLM이 질문 평가 (Langchain 사용)
+    # 3. Evaluation LLM이 질문 평가 (문자열 기반 접근)
     print("3. Evaluation LLM이 질문을 평가하는 중...")
     
     # 평가 변수 준비
@@ -295,48 +336,58 @@ async def run_system() -> Dict[str, Any]:
         "goal": goal
     }
     
-    # JSON 파서 생성 (평가 결과를 구조화된 형식으로 받기 위함)
-    eval_parser = JsonOutputParser(pydantic_object=EvaluationResult)
-    
     # 평가 프롬프트 템플릿
-    eval_prompt_template = PromptTemplate(
-        template="{evaluation_prompt}\n\nFollow-up Question to evaluate: {followup_question}",
-        input_variables=["evaluation_prompt", "followup_question"]
-    )
+    eval_prompt_template = """
+    {evaluation_prompt}
+    
+    Follow-up Question to evaluate: {followup_question}
+    """
     
     # 평가 프롬프트 준비 (변수 대체)
     evaluation_prompt = replace_template_variables(prompts["evaluation"], eval_variables)
     
-    # OpenAI 질문 평가
+    # OpenAI 질문 평가 - 문자열 기반 접근으로 변경
+    evaluation_openai = []
     try:
+        # StrOutputParser를 사용하여 원시 문자열 응답 받기
         eval_chain_openai = (
-            eval_prompt_template 
+            PromptTemplate.from_template(eval_prompt_template) 
             | llm_models["evaluation"] 
-            | eval_parser
+            | StrOutputParser()
         )
         
-        eval_result_openai = await eval_chain_openai.ainvoke({
+        # 체인 실행
+        eval_result_openai_str = await eval_chain_openai.ainvoke({
             "evaluation_prompt": evaluation_prompt,
             "followup_question": followup_question_openai
         })
-        evaluation_openai = eval_result_openai.evaluation
+        
+        # 응답에서 JSON 추출 및 파싱
+        evaluation_openai = parse_evaluation_response(eval_result_openai_str)
+        
     except Exception as e:
         print(f"OpenAI 질문 평가 중 오류 발생: {e}")
         evaluation_openai = []
     
-    # Claude 질문 평가
+    # Claude 질문 평가 - 문자열 기반 접근으로 변경
+    evaluation_claude = []
     try:
+        # StrOutputParser를 사용하여 원시 문자열 응답 받기
         eval_chain_claude = (
-            eval_prompt_template 
+            PromptTemplate.from_template(eval_prompt_template) 
             | llm_models["evaluation"] 
-            | eval_parser
+            | StrOutputParser()
         )
         
-        eval_result_claude = await eval_chain_claude.ainvoke({
+        # 체인 실행
+        eval_result_claude_str = await eval_chain_claude.ainvoke({
             "evaluation_prompt": evaluation_prompt,
             "followup_question": followup_question_claude
         })
-        evaluation_claude = eval_result_claude.evaluation
+        
+        # 응답에서 JSON 추출 및 파싱
+        evaluation_claude = parse_evaluation_response(eval_result_claude_str)
+        
     except Exception as e:
         print(f"Claude 질문 평가 중 오류 발생: {e}")
         evaluation_claude = []
@@ -351,11 +402,11 @@ async def run_system() -> Dict[str, Any]:
         "results": {
             "followup_question_openai": {
                 "question": followup_question_openai,
-                "evaluation": [eval_item.dict() for eval_item in evaluation_openai] if evaluation_openai else []
+                "evaluation": evaluation_openai
             },
             "followup_question_claude": {
                 "question": followup_question_claude,
-                "evaluation": [eval_item.dict() for eval_item in evaluation_claude] if evaluation_claude else []
+                "evaluation": evaluation_claude
             }
         }
     }
