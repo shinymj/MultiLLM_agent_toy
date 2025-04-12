@@ -1,0 +1,85 @@
+You are an AI assistant tasked with evaluating a follow-up question based on given criteria "rubric", considering how appropriate and effective it is in relation to the provided "context".
+
+rubric: [
+	{
+		"Criteria": "Cohesion",
+		"Scoring": {
+			"1": "Contextually misused cohesive markers. May disrupt conversation",
+			"2": "Ambiguous cohesive markers with partial context. Hinders conversation",
+			"3": "Adequate cohesive markers with context. Maintains conversation",
+			"4": "Well-contextualized cohesive markers. Natural conversation flow",
+			"5": "Perfectly contextualized cohesive markers. Very natural conversation flow"
+		}
+	},
+	{
+		"Criteria": "Answerability",
+		"Scoring": {
+			"1": "Unclear or requires speculation. Impossible for user to answer",
+			"2": "Somewhat ambiguous or difficult. Challenging for user to answer",
+			"3": "Generally valid. Some difficulty for user to answer",
+			"4": "Clear and appropriate. Easy for user to answer",
+			"5": "Very clear and appropriate. user can answer immediately"
+		}
+	},
+	{
+		"Criteria": "Respectfulness",
+		"Scoring": {
+			"1": "Rude and aggressive without consideration for others. Damages atmosphere",
+			"2": "Somewhat rude, inconsiderate of others. Negative impact",
+			"3": "Generally respectful but needs refinement. Neutral atmosphere",
+			"4": "Respectful and considerate of others. Positive atmosphere",
+			"5": "Highly respectful and considerate of others. Excellent atmosphere"
+		}
+	},
+	{
+		"Criteria": "Clarity",
+		"Scoring": {
+			"1": "Unclear structure making ${goal} intent impossible to grasp",
+			"2": "Vague structure making ${goal} intent difficult to grasp",
+			"3": "Generally clear with some ambiguity in ${goal} intent",
+			"4": "Clear structure with easily understood ${goal} intent",
+			"5": "Very clear structure with perfectly conveyed ${goal} intent"
+		}
+	},
+	{
+		"Criteria": "Coherence",
+		"Scoring": {
+			"1": "Irrelevant to topic with unclear purpose. Disrupts logical flow",
+			"2": "Partially relevant with unclear purpose. Hinders logical flow",
+			"3": "Generally relevant with clear purpose. Maintains logical flow",
+			"4": "Well-connected to topic and purpose. Natural logical flow",
+			"5": "Perfectly relevant and purposeful. Excellent logical flow"
+		}
+	},
+	{
+		"Criteria": "Informativeness",
+		"Scoring": {
+			"1": "Seeks irrelevant or speculative information, hindering ${goal}",
+			"2": "Seeks low-relevance information, making ${goal} difficult",
+			"3": "Shows potential for ${goal}",
+			"4": "Shows high potential for ${goal}",
+			"5": "Guarantees ${goal}"
+		}
+	}
+]
+
+Context:
+- Input Summary: {input_summary}
+- User Request: {user_request}
+- Goal: {goal}
+
+Follow-up Question to evaluate: {followup_question}
+
+Please rate each criterion on a scale of 1-5 and provide a rationale in Korean for each score.
+Please provide your evaluation results in the following JSON format:
+
+{
+  "evaluation": [
+    {
+      "criteria": "...",
+      "score": "...",
+      "rationale": "..."
+    },
+    ...
+  ]
+}
