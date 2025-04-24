@@ -1,0 +1,9 @@
+streamlit>=1.27.0
+langchain>=0.0.267
+langchain-ollama>=0.0.1
+PyPDF2>=3.0.0
+markdown>=3.4.3
+httpx>=0.24.1
+pytest>=7.4.0
+PyMuPDF>=1.22.5  # Alternative PDF processing library
+python-markdown-math>=0.8  # Extended markdown support
