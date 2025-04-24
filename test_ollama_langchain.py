@@ -20,18 +20,18 @@ model = OllamaLLM(model="deepseek-r1:8b")
 chain = prompt | model
 
 async def main():
-    result = await chain.ainvoke({"question": "What is LangChain?"})
+    result = await chain.ainvoke({"question": "Why is question important between human and AI?"})
     print(result)
     
     # 결과 저장
     output = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "question": "What is LangChain?",
+        "question": "",
         "answer": result
     }
     
     # 파일명에 타임스탬프 포함
-    filename = f"ollama_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    filename = f"_output/ollama_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
