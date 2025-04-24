@@ -65,6 +65,8 @@ if "conversation_history" not in st.session_state:
     st.session_state.conversation_history = []
 if "file_content" not in st.session_state:
     st.session_state.file_content = None
+if "file_name" not in st.session_state:
+    st.session_state.file_name = None  # Added to track the file name
 if "model_params" not in st.session_state:
     st.session_state.model_params = {
         "model": "gemma3:12b",
@@ -183,7 +185,8 @@ def save_conversation(conversation, format="json", include_metadata=True):
                 "model": st.session_state.model_params["model"],
                 "temperature": st.session_state.model_params["temperature"],
                 "max_tokens": st.session_state.model_params["max_tokens"],
-                "system_prompt": st.session_state.system_prompt
+                "system_prompt": st.session_state.system_prompt,
+                "file_name": st.session_state.file_name if st.session_state.file_name else "None"
             }
             
         with open(filename, "w", encoding="utf-8") as f:
@@ -200,7 +203,8 @@ def save_conversation(conversation, format="json", include_metadata=True):
                 f.write(f"- **Model**: {st.session_state.model_params['model']}\n")
                 f.write(f"- **Temperature**: {st.session_state.model_params['temperature']}\n")
                 f.write(f"- **Max Tokens**: {st.session_state.model_params['max_tokens']}\n")
-                f.write(f"- **System Prompt**: {st.session_state.system_prompt}\n\n")
+                f.write(f"- **System Prompt**: {st.session_state.system_prompt}\n")
+                f.write(f"- **File Name**: {st.session_state.file_name if st.session_state.file_name else 'None'}\n\n")
             
             f.write("## Conversation\n\n")
             
@@ -292,6 +296,7 @@ with st.sidebar:
             file_content = process_uploaded_file(uploaded_file)
             if file_content:
                 st.session_state.file_content = file_content
+                st.session_state.file_name = uploaded_file.name  # Store the file name
                 st.success(f"File processed: {uploaded_file.name}")
                 
                 # Display a preview of the extracted content
@@ -304,6 +309,7 @@ with st.sidebar:
     if st.session_state.file_content is not None:
         if st.button("Clear File"):
             st.session_state.file_content = None
+            st.session_state.file_name = None  # Also clear the file name
     
     # Save conversation section
     st.subheader("Save Conversation")
@@ -330,6 +336,7 @@ with st.sidebar:
         st.session_state.messages = []
         st.session_state.conversation_history = []
         st.session_state.file_content = None
+        st.session_state.file_name = None  # Also clear the file name
         st.success("Conversation cleared")
 
 # Main chat interface
