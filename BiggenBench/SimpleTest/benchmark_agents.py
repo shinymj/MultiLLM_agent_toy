@@ -6,7 +6,7 @@ import argparse
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 
-from langchain_community.llms import Ollama
+from langchain_ollama import OllamaLLM
 from langchain_anthropic import ChatAnthropic
 
 # Load environment variables from .env file
@@ -43,7 +43,7 @@ def get_agent_responses(prompts: List[Dict], agent_config: Dict) -> List[Dict]:
 
     # Initialize agent based on configuration
     if agent_config["type"] == "ollama":
-        agent = Ollama(model=agent_config["model"])
+        agent = OllamaLLM(model=agent_config["model"])
     else:
         raise ValueError(f"Unsupported agent type: {agent_config['type']}")
 
@@ -134,46 +134,88 @@ Score 3 means: {benchmark_item['score_rubric']['score3_description']}
 Score 4 means: {benchmark_item['score_rubric']['score4_description']}
 Score 5 means: {benchmark_item['score_rubric']['score5_description']}
 
-Please evaluate the AI assistant's response on a scale from 1 to 5, where 1 is the worst and 5 is the best.
-Provide your score and a detailed rationale for your scoring.
+Please evaluate the AI assistant's response on a scale from 1 to 5, where 1 is the worst and 5 is the best. 
+Reference the score descriptions above to assign the most appropriate score.
 
 Your evaluation should be in this format:
 Score: [Your score between 1-5]
-Rationale: [Your detailed explanation of why you gave this score]
+Rationale: [Briefly explain which aspects of the score description the response most closely matches. Keep your explanation concise.]
 """
             
             try:
                 # Get evaluation from Claude
                 evaluation_response = evaluator.invoke(evaluation_prompt)
                 
-                # Extract score and rationale from evaluation response
-                score_line = [line for line in evaluation_response.content[0].text.split('\n') if line.startswith('Score:')]
-                rationale_lines = []
-                capture_rationale = False
-                
-                for line in evaluation_response.content[0].text.split('\n'):
-                    if line.startswith('Rationale:'):
-                        capture_rationale = True
-                        rationale_lines.append(line.replace('Rationale:', '').strip())
-                    elif capture_rationale:
-                        rationale_lines.append(line)
-                
-                if score_line:
-                    try:
-                        score = int(score_line[0].replace('Score:', '').strip())
-                    except ValueError:
-                        score = None
+                # Get the evaluation text from the response
+                # ChatAnthropic returns a message object with content
+                evaluation_text = ""
+                if hasattr(evaluation_response, 'content'):
+                    # Handle new ChatAnthropic response format
+                    if isinstance(evaluation_response.content, list):
+                        for content_item in evaluation_response.content:
+                            if hasattr(content_item, 'text'):
+                                evaluation_text += content_item.text
+                            elif isinstance(content_item, dict) and 'text' in content_item:
+                                evaluation_text += content_item['text']
+                    elif isinstance(evaluation_response.content, str):
+                        evaluation_text = evaluation_response.content
+                elif hasattr(evaluation_response, 'text'):
+                    # Handle possible direct text property
+                    evaluation_text = evaluation_response.text
+                elif isinstance(evaluation_response, str):
+                    # Handle if the response is directly a string
+                    evaluation_text = evaluation_response
                 else:
-                    score = None
+                    # Try to convert the entire response to a string as fallback
+                    evaluation_text = str(evaluation_response)
                 
-                rationale = ' '.join(rationale_lines)
+                # Extract score and rationale from evaluation text
+                score = None
+                rationale = ""
+                
+                # Look for score in the evaluation text
+                for line in evaluation_text.split('\n'):
+                    if line.lower().startswith('score:'):
+                        # Extract the score, handling potential unexpected formats
+                        try:
+                            score_str = line.replace('Score:', '').strip()
+                            # Extract just the first number in case there are additional characters
+                            import re
+                            score_match = re.search(r'\d+', score_str)
+                            if score_match:
+                                score = int(score_match.group())
+                        except ValueError:
+                            score = None
+                
+                # Extract rationale - everything after "Rationale:" or similar
+                rationale_start = -1
+                for i, line in enumerate(evaluation_text.split('\n')):
+                    if 'rationale:' in line.lower():
+                        rationale_start = i
+                        # Remove "Rationale:" prefix from the first line
+                        rationale = line.split(':', 1)[1].strip() if ':' in line else line
+                        break
+                
+                # If we found a rationale starting point, collect all subsequent lines
+                if rationale_start >= 0:
+                    rationale_lines = evaluation_text.split('\n')[rationale_start+1:]
+                    rationale += ' ' + ' '.join(rationale_lines).strip()
+                else:
+                    # If no explicit rationale marker, use everything after the score
+                    score_position = evaluation_text.lower().find('score:')
+                    if score_position >= 0:
+                        # Find the end of the score line
+                        score_line_end = evaluation_text.find('\n', score_position)
+                        if score_line_end >= 0:
+                            rationale = evaluation_text[score_line_end:].strip()
                 
                 evaluations.append({
                     "id": prompt_id,
                     "agent_name": response["agent_name"],
+                    "agent_response": response["response"],
+                    "reference_answer": benchmark_item['reference_answer'],
                     "score": score,
-                    "rationale": rationale,
-                    "full_evaluation": evaluation_response.content[0].text
+                    "rationale": rationale
                 })
                 
                 # Small delay to prevent rate limiting
@@ -184,9 +226,10 @@ Rationale: [Your detailed explanation of why you gave this score]
                 evaluations.append({
                     "id": prompt_id,
                     "agent_name": response["agent_name"],
+                    "agent_response": response["response"],
+                    "reference_answer": benchmark_item['reference_answer'],
                     "score": None,
-                    "rationale": f"ERROR: {str(e)}",
-                    "full_evaluation": f"ERROR: {str(e)}"
+                    "rationale": f"ERROR: {str(e)}"
                 })
     
     return evaluations
