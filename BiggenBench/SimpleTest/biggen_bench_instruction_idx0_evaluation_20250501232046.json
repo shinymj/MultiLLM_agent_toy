@@ -1,0 +1,30 @@
+[
+  {
+    "id": "instruction_following_multi_task_inference_0",
+    "agent_name": "Agent1",
+    "score": null,
+    "rationale": "ERROR: 'str' object has no attribute 'text'",
+    "full_evaluation": "ERROR: 'str' object has no attribute 'text'"
+  },
+  {
+    "id": "instruction_following_multi_task_inference_0",
+    "agent_name": "Agent2",
+    "score": null,
+    "rationale": "ERROR: 'str' object has no attribute 'text'",
+    "full_evaluation": "ERROR: 'str' object has no attribute 'text'"
+  },
+  {
+    "id": "instruction_following_education_content_creation_0",
+    "agent_name": "Agent1",
+    "score": null,
+    "rationale": "ERROR: 'str' object has no attribute 'text'",
+    "full_evaluation": "ERROR: 'str' object has no attribute 'text'"
+  },
+  {
+    "id": "instruction_following_education_content_creation_0",
+    "agent_name": "Agent2",
+    "score": null,
+    "rationale": "ERROR: 'str' object has no attribute 'text'",
+    "full_evaluation": "ERROR: 'str' object has no attribute 'text'"
+  }
+]

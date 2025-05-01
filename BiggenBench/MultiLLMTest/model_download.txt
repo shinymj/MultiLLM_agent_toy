@@ -1,0 +1,192 @@
+import os
+import argparse
+import subprocess
+from pathlib import Path
+from huggingface_hub import snapshot_download, login
+from tqdm.auto import tqdm
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Download LLM models from Hugging Face")
+    parser.add_argument("--output-dir", type=str, default="models",
+                        help="Directory to save downloaded models")
+    parser.add_argument("--llama", action="store_true",
+                        help="Download LLaMA 3.1 model")
+    parser.add_argument("--deepseek", action="store_true",
+                        help="Download DeepSeek R1:8B model")
+    parser.add_argument("--gemma", action="store_true",
+                        help="Download Gemma 3:12B model")
+    parser.add_argument("--token", type=str, default=None,
+                        help="Hugging Face token for downloading gated models")
+    parser.add_argument("--skip-dependencies", action="store_true",
+                        help="Skip installing dependencies")
+    return parser.parse_args()
+
+def install_dependencies():
+    """Install packages required for model downloading"""
+    print("Installing dependencies...")
+    
+    requirements = [
+        "huggingface_hub",
+        "tqdm",
+        "transformers",
+        "accelerate",
+        "safetensors",
+    ]
+    
+    try:
+        subprocess.check_call(["pip", "install"] + requirements)
+        print("Dependencies installed successfully")
+    except Exception as e:
+        print(f"Error installing dependencies: {e}")
+        print("Please install manually: pip install huggingface_hub tqdm transformers accelerate safetensors")
+
+def login_huggingface(token):
+    """Login to Hugging Face with token"""
+    if token:
+        print("Logging in to Hugging Face...")
+        login(token)
+        print("Login successful")
+    else:
+        print("No Hugging Face token provided. Some models may not be accessible.")
+        print("You can get a token at https://huggingface.co/settings/tokens")
+
+def download_model(model_id, output_dir, model_name):
+    """Download model from Hugging Face"""
+    model_dir = os.path.join(output_dir, model_name)
+    os.makedirs(model_dir, exist_ok=True)
+    
+    print(f"Downloading {model_name} from {model_id}...")
+    try:
+        # Download model with progress bar
+        snapshot_download(
+            repo_id=model_id,
+            local_dir=model_dir,
+            local_dir_use_symlinks=False,
+            resume_download=True,
+            tqdm_class=tqdm
+        )
+        print(f"{model_name} downloaded successfully to {model_dir}")
+        return model_dir
+    except Exception as e:
+        print(f"Error downloading {model_name}: {e}")
+        return None
+
+def download_llama(output_dir):
+    """Download LLaMA 3.1 model"""
+    # Meta's LLaMA models require accepting terms and conditions
+    print("\n=== DOWNLOADING LLAMA 3.1 ===")
+    print("Note: LLaMA models require accepting Meta's terms and conditions.")
+    print("You need to have access granted on Hugging Face.")
+    
+    model_id = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+    return download_model(model_id, output_dir, "llama3.1")
+
+def download_deepseek(output_dir):
+    """Download DeepSeek R1:8B model"""
+    print("\n=== DOWNLOADING DEEPSEEK R1:8B ===")
+    model_id = "deepseek-ai/deepseek-coder-v2-plus-lite"
+    return download_model(model_id, output_dir, "deepseek-r1-8b")
+
+def download_gemma(output_dir):
+    """Download Gemma 3:12B model"""
+    print("\n=== DOWNLOADING GEMMA 3:12B ===")
+    print("Note: Gemma models require accepting Google's terms and conditions.")
+    print("You need to have access granted on Hugging Face.")
+    
+    model_id = "google/gemma-2-12b-it"  # Using Gemma 2 since Gemma 3 might not be readily available
+    return download_model(model_id, output_dir, "gemma3-12b")
+
+def create_model_config(downloaded_models):
+    """Create a configuration file with model paths"""
+    config = {
+        "llama3.1": downloaded_models.get("llama"),
+        "deepseek-r1:8b": downloaded_models.get("deepseek"),
+        "gemma3:12b": downloaded_models.get("gemma")
+    }
+    
+    # Filter out None values
+    config = {k: v for k, v in config.items() if v}
+    
+    # Write config to file
+    with open("model_config.py", "w") as f:
+        f.write("# Model paths for BigGen Bench testing\n\n")
+        f.write("MODEL_PATHS = {\n")
+        for model_name, path in config.items():
+            f.write(f'    "{model_name}": r"{path}",\n')
+        f.write("}\n")
+    
+    print("\nCreated model_config.py with paths to downloaded models")
+    print("You can use this config in your testing script")
+
+def update_run_script(downloaded_models):
+    """Create a run script with downloaded model paths"""
+    script_content = "#!/bin/bash\n\n"
+    script_content += "# Auto-generated script to run BigGen Bench test\n\n"
+    
+    cmd = "python biggen_bench_test.py"
+    
+    if downloaded_models.get("llama"):
+        cmd += f" --llama-path \"{downloaded_models['llama']}\""
+    
+    if downloaded_models.get("deepseek"):
+        cmd += f" --deepseek-path \"{downloaded_models['deepseek']}\""
+    
+    if downloaded_models.get("gemma"):
+        cmd += f" --gemma-path \"{downloaded_models['gemma']}\""
+    
+    script_content += cmd
+    script_content += " --use-openai --use-anthropic\n"
+    
+    # Write script
+    with open("run_benchmark.sh", "w") as f:
+        f.write(script_content)
+    
+    # Make executable
+    os.chmod("run_benchmark.sh", 0o755)
+    
+    print("\nCreated run_benchmark.sh script")
+    print("You can run the benchmark with: ./run_benchmark.sh")
+
+def main():
+    args = parse_args()
+    
+    # Create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # Install dependencies if needed
+    if not args.skip_dependencies:
+        install_dependencies()
+    
+    # Login to Hugging Face
+    login_huggingface(args.token)
+    
+    # Download requested models
+    downloaded_models = {}
+    
+    if args.llama:
+        downloaded_models["llama"] = download_llama(args.output_dir)
+    
+    if args.deepseek:
+        downloaded_models["deepseek"] = download_deepseek(args.output_dir)
+    
+    if args.gemma:
+        downloaded_models["gemma"] = download_gemma(args.output_dir)
+    
+    # Create model config and run script
+    if any(downloaded_models.values()):
+        create_model_config(downloaded_models)
+        update_run_script(downloaded_models)
+    
+    print("\nDownload process complete!")
+    print("Note: Some models may require significant disk space and memory to run.")
+    print("Make sure your system has enough resources before running the benchmark.")
+    
+    if not any(downloaded_models.values()):
+        print("\nNo models were downloaded. To download models, use one or more of these flags:")
+        print("  --llama       : Download LLaMA 3.1 model")
+        print("  --deepseek    : Download DeepSeek R1:8B model")
+        print("  --gemma       : Download Gemma 3:12B model")
+        print("\nExample: python model_download.py --llama --deepseek --token YOUR_HF_TOKEN")
+
+if __name__ == "__main__":
+    main()
