@@ -1,0 +1,88 @@
+{
+  "builder_name": "parquet",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "bi_g_gen-bench",
+  "dataset_size": 2637896,
+  "description": "",
+  "download_checksums": {
+    "hf://datasets/prometheus-eval/BiGGen-Bench@3a9589efbad801052bb2e153b44ce027498c27e4/data/test-00000-of-00001.parquet": {
+      "num_bytes": 1241396,
+      "checksum": null
+    }
+  },
+  "download_size": 1241396,
+  "features": {
+    "id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "capability": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "task": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "instance_idx": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "system_prompt": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "input": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "reference_answer": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "score_rubric": {
+      "criteria": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "score1_description": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "score2_description": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "score3_description": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "score4_description": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "score5_description": {
+        "dtype": "string",
+        "_type": "Value"
+      }
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 3879292,
+  "splits": {
+    "test": {
+      "name": "test",
+      "num_bytes": 2637896,
+      "num_examples": 765,
+      "dataset_name": "bi_g_gen-bench"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}
